@@ -1,0 +1,1 @@
+xwad.exe -vtfcmd "C:\Program Files\Nem's Tools\vtflib132-bin\bin\x64\VTFCmd.exe" -decal -basedir "C:\steam\steamapps\sourcemods\wantedsource" -wadfile "C:\steam\steamapps\common\Half-Life\wantedsp\decals.wad"

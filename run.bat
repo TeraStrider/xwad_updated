@@ -1,1 +1,1 @@
-xwad.exe -vtfcmd "C:\Program Files\Nem's Tools\vtflib132-bin\bin\x64\VTFCmd.exe" -basedir "C:\steam\steamapps\sourcemods\wantedsource" -wadfile "C:\steam\steamapps\common\Half-Life\wantedsp\wanted.wad"
+xwad.exe -materials "C:\steam\steamapps\common\Half-Life\wantedsp\sound\materials.txt" -vtfcmd "C:\Program Files\Nem's Tools\vtflib132-bin\bin\x64\VTFCmd.exe" -basedir "C:\steam\steamapps\sourcemods\wantedsource" -wadfile "C:\steam\steamapps\common\Half-Life\wantedsp\wanted.wad"

@@ -1,4 +1,4 @@
-//========= Copyright © 1996-2005, Valve Corporation, All rights reserved.
+//========= Copyright Â© 1996-2005, Valve Corporation, All rights reserved.
 //============//
 //
 // Purpose:
@@ -8,6 +8,7 @@
 //=============================================================================//
 
 #include <windows.h>
+#include <map>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -25,10 +26,10 @@
 #include "wadlib.h"
 #include "goldsrc_bspfile.h"
 
+
 extern FILE *wadhandle;
 
 #define max(a, b) a > b ? a : b
-
 #pragma pack(1)
 struct TGAHeader_t {
   unsigned char id_length;
@@ -79,19 +80,42 @@ bool g_bBMPAllowTranslucent = false;
 bool g_bDecal = false;
 bool g_bQuiet = false;
 
-//vmt additions
+//vmtcmd additions
 const char *g_pMaterialtxt = NULL;
-
-#define MAX_VMT_PARAMS 16
+#define VMT_TRANSPARENT   0b00000000000000000000000000000001
+#define VMT_WATER         0b00000000000000000000000000000010
+#define VMT_ANIMATED      0b00000000000000000000000000000100
+#define VMT_TOGGLED       0b00000000000000000000000000001000
+#define VMT_TILING        0b00000000000000000000000000010000
+#define VMT_SKY           0b00000000000000000000000000100000
+#define VMT_SCROLL        0b00000000000000000000000001000000
+#define VMT_METAL         0b00000000000000000000000010000000
+#define VMT_VENT          0b00000000000000000000000100000000
+#define VMT_DIRT          0b00000000000000000000001000000000
+#define VMT_SLOSH         0b00000000000000000000010000000000
+#define VMT_TILE          0b00000000000000000000100000000000
+#define VMT_GRATE         0b00000000000000000001000000000000
+#define VMT_WOOD          0b00000000000000000010000000000000
+#define VMT_COMPUTER      0b00000000000000000100000000000000
+#define VMT_GLASS         0b00000000000000001000000000000000
+#define VMT_FOGINTENSITY  0b00000000000000010000000000000000
 
 struct VTexVMTParam_t {
   const char *m_szParam;
   const char *m_szValue;
 };
+#define MAX_VMT_PARAMS 16
 
 static VTexVMTParam_t g_VMTParams[MAX_VMT_PARAMS];
 
 static int g_NumVMTParams = 0;
+
+//vmtcmd additions
+#define MAX_VTF_PARAMS 16
+
+static VTexVMTParam_t g_VTFParams[MAX_VTF_PARAMS];
+
+static int g_NumVTFParams = 0;
 
 void PrintExitStuff() {
   if (!g_bQuiet) {
@@ -100,31 +124,22 @@ void PrintExitStuff() {
   }
 }
 
-RGBAColor *ConvertToRGBUpsideDown(byte *pBits, int width, int height,
-                                  byte *pPalette, bool *bAlphatest) {
+RGBAColor *ConvertToRGBAUpsideDown(byte *pBits, int width, int height, byte *pPalette, bool *bAlphatest) {
   RGBAColor *pRet = new RGBAColor[width * height];
 
-  byte newPalette[256][3];
-  printf("\t\tColor bgr%d,%d,%d\n", pPalette[255 * 3 + 2],pPalette[255 * 3 + 1],pPalette[255 * 3 + 0]);
-  for (int i = 0; i < 256; i++) {
-    newPalette[i][0] = pPalette[i * 3 + 2];
-    newPalette[i][1] = pPalette[i * 3 + 1];
-    newPalette[i][2] = pPalette[i * 3 + 0];
-  }
   // Write the lines upside-down.
-  byte alpha = (newPalette[255][2] + newPalette[255][1] + newPalette[255][0]) / 3;
   for (int y = 0; y < height; y++) {
     byte *pLine = &pBits[(height - y - 1) * width];
     for (int x = 0; x < width; x++) {
       if (g_bDecal) {
-        pRet[y * width + x].r = newPalette[255][0];
-        pRet[y * width + x].g = newPalette[255][1];
-        pRet[y * width + x].b = newPalette[255][2];
+        pRet[y * width + x].r = pPalette[255 * 3 + 2];
+        pRet[y * width + x].g = pPalette[255 * 3 + 1];
+        pRet[y * width + x].b = pPalette[255 * 3 + 0];
         pRet[y * width + x].a = pLine[x];
       } else {
-        pRet[y * width + x].r = newPalette[pLine[x]][0];
-        pRet[y * width + x].g = newPalette[pLine[x]][1];
-        pRet[y * width + x].b = newPalette[pLine[x]][2];
+        pRet[y * width + x].r = pPalette[pLine[x] * 3 + 2];
+        pRet[y * width + x].g = pPalette[pLine[x] * 3 + 1];
+        pRet[y * width + x].b = pPalette[pLine[x] * 3 + 0];
         if (pLine[x] == 255) {
           *bAlphatest = true;
           pRet[y * width + x].a = 0;
@@ -196,38 +211,38 @@ void FloodSolidPixels(RGBAColor *pTexels, int width, int height) {
   delete[] pNewAlphaMap;
 }
 
-RGBAColor *ResampleImage(RGBAColor *pRGB, int width, int height, int newWidth,
-                         int newHeight) {
-  RGBAColor *pResampled = new RGBAColor[newWidth * newHeight];
-  for (int y = 0; y < newHeight; y++) {
-    float yPercent = (float)y / (newHeight - 1);
-    float flSrcY = yPercent * (height - 1.00001f);
-    int iSrcY = (int)flSrcY;
-    float flYFrac = flSrcY - iSrcY;
+// RGBAColor *ResampleImage(RGBAColor *pRGB, int width, int height, int newWidth,
+//                          int newHeight) {
+//   RGBAColor *pResampled = new RGBAColor[newWidth * newHeight];
+//   for (int y = 0; y < newHeight; y++) {
+//     float yPercent = (float)y / (newHeight - 1);
+//     float flSrcY = yPercent * (height - 1.00001f);
+//     int iSrcY = (int)flSrcY;
+//     float flYFrac = flSrcY - iSrcY;
 
-    for (int x = 0; x < newWidth; x++) {
-      float xPercent = (float)x / (newWidth - 1);
-      float flSrcX = xPercent * (width - 1.00001f);
-      int iSrcX = (int)flSrcX;
-      float flXFrac = flSrcX - iSrcX;
+//     for (int x = 0; x < newWidth; x++) {
+//       float xPercent = (float)x / (newWidth - 1);
+//       float flSrcX = xPercent * (width - 1.00001f);
+//       int iSrcX = (int)flSrcX;
+//       float flXFrac = flSrcX - iSrcX;
 
-      byte *pSrc0 = ((byte *)&pRGB[iSrcY * width + iSrcX]);
-      byte *pSrc1 = ((byte *)&pRGB[iSrcY * width + iSrcX + 1]);
-      byte *pSrc2 = ((byte *)&pRGB[(iSrcY + 1) * width + iSrcX]);
-      byte *pSrc3 = ((byte *)&pRGB[(iSrcY + 1) * width + iSrcX + 1]);
-      byte *pDest = (byte *)&pResampled[y * newWidth + x];
+//       byte *pSrc0 = ((byte *)&pRGB[iSrcY * width + iSrcX]);
+//       byte *pSrc1 = ((byte *)&pRGB[iSrcY * width + iSrcX + 1]);
+//       byte *pSrc2 = ((byte *)&pRGB[(iSrcY + 1) * width + iSrcX]);
+//       byte *pSrc3 = ((byte *)&pRGB[(iSrcY + 1) * width + iSrcX + 1]);
+//       byte *pDest = (byte *)&pResampled[y * newWidth + x];
 
-      // Now blend the nearest 4 source pixels.
-      for (int i = 0; i < 4; i++) {
-        // pDest[i] = pSrc0[i];
-        float topColor = (pSrc0[i] * (1 - flXFrac) + pSrc1[i] * flXFrac);
-        float bottomColor = (pSrc2[i] * (1 - flXFrac) + pSrc3[i] * flXFrac);
-        pDest[i] = (byte)(topColor * (1 - flYFrac) + bottomColor * flYFrac);
-      }
-    }
-  }
-  return pResampled;
-}
+//       // Now blend the nearest 4 source pixels.
+//       for (int i = 0; i < 4; i++) {
+//         // pDest[i] = pSrc0[i];
+//         float topColor = (pSrc0[i] * (1 - flXFrac) + pSrc1[i] * flXFrac);
+//         float bottomColor = (pSrc2[i] * (1 - flXFrac) + pSrc3[i] * flXFrac);
+//         pDest[i] = (byte)(topColor * (1 - flYFrac) + bottomColor * flYFrac);
+//       }
+//     }
+//   }
+//   return pResampled;
+// }
 
 
 
@@ -236,8 +251,7 @@ bool WriteTGAFile(const char *pFilename, bool bAllowTranslucent, byte *pBits,
                   bool *bAlphatest, bool *bResized) {
   *bResized = *bAlphatest = false;
 
-  RGBAColor *pRGB =
-      ConvertToRGBUpsideDown(pBits, width, height, pPalette, bAlphatest);
+  RGBAColor *pRGB = ConvertToRGBAUpsideDown(pBits, width, height, pPalette, bAlphatest);
 
   // Unless the filename starts with '{', we don't allow translucency.
   if (!bAllowTranslucent) *bAlphatest = false;
@@ -261,13 +275,13 @@ bool WriteTGAFile(const char *pFilename, bool bAllowTranslucent, byte *pBits,
 
       printf("\t(%dx%d) -> (%dx%d)", width, height, newWidth, newHeight);
 
-      RGBAColor *pResampled =
-          ResampleImage(pRGB, width, height, newWidth, newHeight);
-      delete[] pRGB;
-      pRGB = pResampled;
+      //RGBAColor *pResampled =
+          //ResampleImage(pRGB, width, height, newWidth, newHeight);
+      //delete[] pRGB;
+      //pRGB = pResampled;
 
-      width = newWidth;
-      height = newHeight;
+      //width = newWidth;
+      //height = newHeight;
 
       *bResized = true;
     }
@@ -281,13 +295,23 @@ bool WriteTGAFile(const char *pFilename, bool bAllowTranslucent, byte *pBits,
   hdr.height = height;
   hdr.colormap_type = 0;  // no, no colormap please
   hdr.image_type = 2;     // uncompressed, true-color
-  hdr.pixel_size = 32;    // 32 bits per pixel
+  if (*bAlphatest || g_bDecal) {
+    hdr.pixel_size = 32;    // 32 bits per pixel
+  } else {
+    hdr.pixel_size = 24;    // 32 bits per pixel
+  }
 
   FILE *fp = fopen(pFilename, "wb");
   if (!fp) return false;
 
   SafeWrite(fp, &hdr, sizeof(hdr));
-  SafeWrite(fp, pRGB, sizeof(RGBAColor) * width * height);
+  if (*bAlphatest || g_bDecal) {
+    SafeWrite(fp, pRGB, sizeof(RGBAColor) * width * height);
+  } else {
+    for (int i = 0; i < height * width; i++) {
+      SafeWrite(fp, pRGB + i, sizeof(unsigned char) * 3);
+    }
+  }
   fclose(fp);
 
   delete[] pRGB;
@@ -392,8 +416,37 @@ void EnsureDirExists(const char *pDir) {
   }
 }
 
+
+char *FilenameParams(const char *pName, int *vmtparams) {
+  int vmtp = 0;
+  if (*pName == '{') {
+    vmtp |= VMT_TRANSPARENT;
+    pName++;
+  } else if (*pName == '+' && *(pName + 1) <= '9' && *(pName + 1) >= '0') {
+    vmtp |= VMT_ANIMATED;
+    pName+=2;
+  } else if (*pName == '+' && ((*(pName + 1) <= 'Z' && *(pName + 1) >= 'A') || (*(pName + 1) <= 'z' && *(pName + 1) >= 'a'))) {
+    vmtp |= VMT_TOGGLED;
+    pName+=2;
+  } else if (*pName == '-' ) {
+    vmtp |= VMT_TILING;
+    pName+=2;
+  } else if (*pName == '!') {
+    vmtp |= VMT_WATER;
+    pName++;
+  } else if (strncmp(pName, "scroll", 6) == 0) {
+    vmtp |= VMT_SCROLL;
+    pName+=6;
+  }
+  if (*pName == '~') {
+    pName++;
+  }
+  *vmtparams = vmtp;
+  return (char *)pName;
+}
+
 void WriteVMTFile(const char *pBaseDir, const char *pSubDir, const char *pName,
-                  bool bAlphatest) {
+                  bool bAlphatest, char fogintensity, int fogcolor, char **matkeys, char *matvals, int pairs) {
   char vmtFilename[512];
   sprintf(vmtFilename, "%s\\materials\\%s\\%s.vmt", pBaseDir, pSubDir, pName);
 
@@ -402,21 +455,61 @@ void WriteVMTFile(const char *pBaseDir, const char *pSubDir, const char *pName,
     Error("\tWriteVMTFile failed to open %s for writing.\n", vmtFilename);
     return;
   }
+  int vmtparams = 0;
+  char *pCleanName = FilenameParams(pName, &vmtparams);
 
   fprintf(fp, "\"%s\"\n{\n", g_pShader);
   fprintf(fp, "\t\"$basetexture\"\t\"%s\\%s\"\n", pSubDir, pName);
 
-  if (bAlphatest) {
-    fprintf(fp, "\t\"$alphatest\"\t\"1\"\n");
-    fprintf(fp, "\t\"$alphatestreference\"\t\"0.5\"\n");
-  }
-
   if (g_bDecal) {
     fprintf(fp, "\t\"$translucent\"\t\t\"1\"\n");
     fprintf(fp, "\t\"$decal\"\t\t\"1\"\n");
+  } else if (vmtparams & VMT_TRANSPARENT) {
+    fprintf(fp, "\t\"$alphatest\"\t\"1\"\n");
+    fprintf(fp, "\t\"$alphatestreference\"\t\"0.5\"\n");
+  } else if (vmtparams & VMT_WATER) {
+    fprintf(fp, "\t\"%%compilewater\"\t\"1\"\n");
+    fprintf(fp, "\t\"$bottommaterial\"\t\"%s\\%s\"\n", pSubDir, pName);
+    fprintf(fp, "\t\"$fogenable\"\t\"1\"\n");
+    fprintf(fp, "\t\"$fogstart\"\t\"0\"\n");
+    fprintf(fp, "\t\"$fogend\"\t\"%d\"\n", (255 - fogintensity + 64));
+    fprintf(fp, "\t\"$fogcolor\"\t\"{%d %d %d}\"\n", (fogcolor) & 255, (fogcolor >> 8) & 255, (fogcolor >> 16) & 255);
   }
-
   int i;
+  char lastmat = 0;
+  for (i = 0; i < pairs; i++) {
+    if (strlen(matkeys[i]) < 12) {
+      if (!stricmp(matkeys[i], pName)) {
+        lastmat = matvals[i];
+      } else if (!stricmp(matkeys[i], pCleanName)) {
+        lastmat = matvals[i];
+      }
+    } else {
+      if (!strnicmp(matkeys[i], pName, strlen(matkeys[i]))) {
+        lastmat = matvals[i];
+      }
+    }
+  }
+  printf("\t\tLastMaterial [%c]\n", lastmat);
+  if (lastmat == 'M') {
+    fprintf(fp, "\t\"$surfaceprop\"\t\"metal\"\n");
+  } else if (lastmat == 'V') {
+    fprintf(fp, "\t\"$surfaceprop\"\t\"vent\"\n");
+  } else if (lastmat == 'D') {
+    fprintf(fp, "\t\"$surfaceprop\"\t\"dirt\"\n");
+  } else if (lastmat == 'S') {
+    fprintf(fp, "\t\"$surfaceprop\"\t\"water\"\n");
+  } else if (lastmat == 'T') {
+    fprintf(fp, "\t\"$surfaceprop\"\t\"tile\"\n");
+  } else if (lastmat == 'G') {
+    fprintf(fp, "\t\"$surfaceprop\"\t\"metalgrate\"\n");
+  } else if (lastmat == 'W') {
+    fprintf(fp, "\t\"$surfaceprop\"\t\"wood\"\n");
+  } else if (lastmat == 'P') {
+    fprintf(fp, "\t\"$surfaceprop\"\t\"computer\"\n");
+  } else if (lastmat == 'Y') {
+    fprintf(fp, "\t\"$surfaceprop\"\t\"glass\"\n");
+  }
   for (i = 0; i < g_NumVMTParams; i++) {
     fprintf(fp, "\t\"%s\" \"%s\"\n", g_VMTParams[i].m_szParam,
             g_VMTParams[i].m_szValue);
@@ -483,7 +576,7 @@ void RunVTFCMDOnFile(const char *pBaseDir, const char *pSubDir, const char *pNam
 					 const char *pVTFcmdexe) {
   // Call vtfcmd on this texture now.
   char vtfcmdcommand[1024];
-  sprintf(vtfcmdcommand, "\"\"%s\" -silent -file \"%s\" -output \"%s\\materials\\%s\"\"", pVTFcmdexe, pFilename, pBaseDir, pSubDir);
+  sprintf(vtfcmdcommand, "\"\"%s\" -silent -resize -rmethod BIGGEST -file \"%s\" -output \"%s\\materials\\%s\"\"", pVTFcmdexe, pFilename, pBaseDir, pSubDir);
   if (system(vtfcmdcommand) != 0) {
     Error("\tCommand '%s' failed!\n", vtfcmdcommand);
   } else if (!g_bQuiet) {
@@ -494,10 +587,16 @@ void RunVTFCMDOnFile(const char *pBaseDir, const char *pSubDir, const char *pNam
 void WriteOutputFiles(const char *pBaseDir, const char *pSubDir,
                       const char *pName, bool bAllowTranslucent, byte *buffer,
                       int width, int height, byte *pPalette, bool bVTex,
-                      const char *pVTFcmdexe) {
+                      const char *pVTFcmdexe, char **matkeys, char *matvals, int pairs) {
   bool bAlphatest, bResized;
   bool bPowerOf2 = true;
-
+  int  vmtparams = 0;
+  char fogintensity = 0;
+  int  fogcolor;
+  fogcolor = (((int)pPalette[9]) | ((int)pPalette[10] << 8) | ((int)pPalette[11] << 16));
+  if (pPalette[13] == 0 && pPalette[14] == 0) {
+    fogintensity = pPalette[12];
+  }
   char tgaFilename[1024];
   sprintf(tgaFilename, "%s\\materialsrc\\%s\\%s.tga", pBaseDir, pSubDir, pName);
   if (!WriteTGAFile(tgaFilename, bAllowTranslucent, buffer, width, height,
@@ -506,7 +605,7 @@ void WriteOutputFiles(const char *pBaseDir, const char *pSubDir,
   }
 
   // Write its .VMT file.
-  WriteVMTFile(pBaseDir, pSubDir, pName, bAlphatest);
+  WriteVMTFile(pBaseDir, pSubDir, pName, bAlphatest, fogintensity, fogcolor, matkeys, matvals, pairs);
 
   // Write a text file for it if it's translucent so we can enable pointsample
   // for vtex.
@@ -518,10 +617,10 @@ void WriteOutputFiles(const char *pBaseDir, const char *pSubDir,
     WriteResizeInfoFile(pBaseDir, pSubDir, pName, width, height);
   }
 
-  if (bVTex) {
-    RunVTexOnFile(pBaseDir, tgaFilename);
-  }
-  if (*pVTFcmdexe) {
+  // if (bVTex) {
+  //   RunVTexOnFile(pBaseDir, tgaFilename);
+  // }
+  if (pVTFcmdexe) {
   	RunVTFCMDOnFile(pBaseDir, pSubDir, pName, tgaFilename, pVTFcmdexe);
   }
 }
@@ -536,7 +635,7 @@ void EnsureDirectoriesExist(const char *pBaseDir, const char *pSubDir) {
 
 void ProcessWadFile(const char *pWadFilename, const char *pBaseDir,
                     const char *pSubDir, const char *pOnlyTex, bool bVTex,
-                    const char *pVTFcmdexe) {
+                    const char *pVTFcmdexe, char **matkeys, char *matvals, int pairs) {
   if (!g_bQuiet) printf("\n\n[WADFILE %s]\n\n", pWadFilename);
 
   // If no -subdir was specified, then figure it out from the wad filename.
@@ -593,14 +692,13 @@ void ProcessWadFile(const char *pWadFilename, const char *pBaseDir,
                      pSubDir,               // subdir under materials
                      qtex->name,            // filename (w/o extension)
                      qtex->name[0] == '{',  // allow transparency?
-                     outbuffer, width, height, pPalette, bVTex, pVTFcmdexe);
+                     outbuffer, width, height, pPalette, bVTex, pVTFcmdexe, matkeys, matvals, pairs);
 
     if (!g_bQuiet) printf("\n");
   }
 }
 
-void ProcessBMPFile(const char *pBaseDir, const char *pSubDir,
-                    const char *pFilename, bool bVTex, const char *pVTFcmdexe) {
+void ProcessBMPFile(const char *pBaseDir, const char *pSubDir,  const char *pFilename, bool bVTex, const char *pVTFcmdexe, char **matkeys, char *matvals, int pairs) {
   if (!g_bQuiet) printf("[%s]\n", pFilename);
 
   if (!pSubDir) pSubDir = ".";
@@ -674,11 +772,10 @@ void ProcessBMPFile(const char *pBaseDir, const char *pSubDir,
                    baseFilename,            // filename (w/o extension)
                    g_bBMPAllowTranslucent,  // allow transparency
                    pixelData, bih.biWidth, bih.biHeight, (byte *)palette,
-                   bVTex, pVTFcmdexe);
+                   bVTex, pVTFcmdexe, matkeys, matvals, pairs);
 }
 
-void ProcessSPRFile(const char *pBaseDir, const char *pSubDir,
-                    const char *pFilename, bool bVTex) {
+void ProcessSPRFile(const char *pBaseDir, const char *pSubDir,  const char *pFilename, bool bVTex) {
   if (!g_bQuiet) printf("[%s]\n", pFilename);
 
   if (!pSubDir) pSubDir = ".";
@@ -794,9 +891,9 @@ void ProcessSPRFile(const char *pBaseDir, const char *pSubDir,
   //
   // Run VTEX on the .txt file?
   //
-  if (bVTex) {
-    RunVTexOnFile(pBaseDir, txtFilename);
-  }
+  // if (bVTex) {
+  //   RunVTexOnFile(pBaseDir, txtFilename);
+  // }
 
   //
   // Generate a .vmt file.
@@ -891,6 +988,41 @@ bool DragAndDropCheck(const char **pBaseDir, const char **pSubDir,
   return true;
 }
 
+void ParseMaterial(const char *g_pMaterialtxt, char ***key, char **value, int *pairs) {
+  FILE *fp = fopen(g_pMaterialtxt, "r");
+  if (!fp) {
+    if (!g_bQuiet) printf("\nCould not Open %s\n", g_pMaterialtxt);
+    return;
+  }
+  char line[125];
+  int cap = 1;
+  char **aux;
+  char *auxs, *tok;
+  *pairs = 0;
+  while (fgets(line, 125, fp)) {
+    if (*line != '/' && *line != ' ' && *line != '\n') {
+      if (*pairs == 0) {
+        *key = (char **)malloc(sizeof(char *));
+        *value = (char *)malloc(sizeof(char));
+      } else if (*pairs >= cap) {
+        cap *= 2;
+        aux = (char **)realloc(*key,cap * sizeof(char *));
+        if (aux) *key = aux;
+        auxs = (char *)realloc(*value, cap * sizeof(char));
+        if (auxs) *value = auxs;
+      }
+      tok = strtok(line, " \n");
+      (*value)[*pairs] = *tok;
+      tok = strtok(NULL, " \n");
+      (*key)[*pairs] = strdup(tok);
+      (*pairs)++;
+    }
+  }
+  for (int i = 0; i < *pairs; i++) {
+    printf("%s %c\n", (*key)[i], (*value)[i]);
+  }
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     return PrintUsage(argv[0]);
@@ -915,6 +1047,20 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     if ((i + 2) < argc) {
       if (stricmp(argv[i], "-vmtparam") == 0 &&
+          g_NumVMTParams < MAX_VMT_PARAMS) {
+        g_VMTParams[g_NumVMTParams].m_szParam = argv[i + 1];
+        g_VMTParams[g_NumVMTParams].m_szValue = argv[i + 2];
+
+        if (!g_bQuiet) {
+          fprintf(stderr, "Adding .vmt parameter: \"%s\"\t\"%s\"\n",
+                  g_VMTParams[g_NumVMTParams].m_szParam,
+                  g_VMTParams[g_NumVMTParams].m_szValue);
+        }
+
+        g_NumVMTParams++;
+
+        i += 2;
+      } else if (stricmp(argv[i], "-vtvparam") == 0 &&
           g_NumVMTParams < MAX_VMT_PARAMS) {
         g_VMTParams[g_NumVMTParams].m_szParam = argv[i + 1];
         g_VMTParams[g_NumVMTParams].m_szValue = argv[i + 2];
@@ -957,7 +1103,7 @@ int main(int argc, char **argv) {
         pVTFcmdexe = argv[i + 1];
         ++i;
       } else if (stricmp(argv[i], "-materials") == 0) {
-        pVTFcmdexe = argv[i + 1];
+        g_pMaterialtxt = argv[i + 1];
         ++i;
       }
     }
@@ -989,8 +1135,15 @@ int main(int argc, char **argv) {
     return PrintUsage(argv[0]);
   }
 
-  char prefix[512];
+  char **matkeys = NULL;
+  char *matvals = NULL;
+  int pairs = 0;
 
+  if (g_pMaterialtxt != NULL) {
+    ParseMaterial(g_pMaterialtxt, &matkeys, &matvals, &pairs);
+  }
+
+  char prefix[512];
   // Scan through each wadfile.
   if (pWadFilenames) {
     ExtractDirectory(pWadFilenames, prefix);
@@ -1002,7 +1155,7 @@ int main(int argc, char **argv) {
         if (!(findData.attrib & _A_SUBDIR)) {
           char fullFilename[512];
           sprintf(fullFilename, "%s\\%s", prefix, findData.name);
-          ProcessWadFile(fullFilename, pBaseDir, pSubDir, pOnlyTex, bVTex, pVTFcmdexe);
+          ProcessWadFile(fullFilename, pBaseDir, pSubDir, pOnlyTex, bVTex, pVTFcmdexe, matkeys, matvals, pairs);
         }
       } while (_findnext(handle, &findData) == 0);
 
@@ -1021,7 +1174,7 @@ int main(int argc, char **argv) {
         if (!(findData.attrib & _A_SUBDIR)) {
           char fullFilename[512];
           sprintf(fullFilename, "%s\\%s", prefix, findData.name);
-          ProcessBMPFile(pBaseDir, pSubDir, fullFilename, bVTex, pVTFcmdexe);
+          ProcessBMPFile(pBaseDir, pSubDir, fullFilename, bVTex, pVTFcmdexe, matkeys, matvals, pairs);
         }
       } while (_findnext(handle, &findData) == 0);
 

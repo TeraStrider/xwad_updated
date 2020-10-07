@@ -273,7 +273,7 @@ bool WriteTGAFile(const char *pFilename, bool bAllowTranslucent, byte *pBits,
       int newHeight = height;
       while ((newHeight & (newHeight - 1))) ++newHeight;
 
-      printf("\t(%dx%d) -> (%dx%d)", width, height, newWidth, newHeight);
+      if (!g_bQuiet) printf("\t (%dx%d) -> (%dx%d)\n", width, height, newWidth, newHeight);
 
       //RGBAColor *pResampled =
           //ResampleImage(pRGB, width, height, newWidth, newHeight);
@@ -490,7 +490,9 @@ void WriteVMTFile(const char *pBaseDir, const char *pSubDir, const char *pName,
       }
     }
   }
-  printf("\t\tLastMaterial [%c]\n", lastmat);
+  if (!g_bQuiet && lastmat) {
+    printf("\t LastMaterial [%c]\n", lastmat);
+  }
   if (lastmat == 'M') {
     fprintf(fp, "\t\"$surfaceprop\"\t\"metal\"\n");
   } else if (lastmat == 'V') {
@@ -580,7 +582,7 @@ void RunVTFCMDOnFile(const char *pBaseDir, const char *pSubDir, const char *pNam
   if (system(vtfcmdcommand) != 0) {
     Error("\tCommand '%s' failed!\n", vtfcmdcommand);
   } else if (!g_bQuiet) {
-  	printf("\n\t\t(%s) -> (%s.vtf)\n", pName, pName);
+  	printf("\t (%s) -> (%s.vtf)\n", pName, pName);
   }
 }
 
@@ -613,15 +615,15 @@ void WriteOutputFiles(const char *pBaseDir, const char *pSubDir,
   //		WriteTXTFile( pBaseDir, pSubDir, pName );
 
   // Write its .resizeinfo file.
-  if (bResized) {
-    WriteResizeInfoFile(pBaseDir, pSubDir, pName, width, height);
-  }
 
   // if (bVTex) {
   //   RunVTexOnFile(pBaseDir, tgaFilename);
   // }
   if (pVTFcmdexe) {
   	RunVTFCMDOnFile(pBaseDir, pSubDir, pName, tgaFilename, pVTFcmdexe);
+  }
+  if (bResized) {
+    WriteResizeInfoFile(pBaseDir, pSubDir, pName, width, height);
   }
 }
 
@@ -670,7 +672,7 @@ void ProcessWadFile(const char *pWadFilename, const char *pBaseDir,
                lumpinfo[i].name, lumpinfo[i].filepos, lumpinfo[i].size);
       continue;
     } else {
-      if (!g_bQuiet) printf("\t%s", lumpinfo[i].name);
+      if (!g_bQuiet) printf("\t%s\n", lumpinfo[i].name);
     }
 
     byte *pPalette =
@@ -693,9 +695,9 @@ void ProcessWadFile(const char *pWadFilename, const char *pBaseDir,
                      qtex->name,            // filename (w/o extension)
                      qtex->name[0] == '{',  // allow transparency?
                      outbuffer, width, height, pPalette, bVTex, pVTFcmdexe, matkeys, matvals, pairs);
-
     if (!g_bQuiet) printf("\n");
   }
+
 }
 
 void ProcessBMPFile(const char *pBaseDir, const char *pSubDir,  const char *pFilename, bool bVTex, const char *pVTFcmdexe, char **matkeys, char *matvals, int pairs) {
